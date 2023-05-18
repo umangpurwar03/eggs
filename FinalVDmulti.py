@@ -1,0 +1,183 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Jan 21 22:53:41 2023
+
+@author: D
+"""
+
+import cv2
+import numpy as np
+import math
+
+classesFile ="best (3).names"
+classes = None
+with open(classesFile, 'rt') as f:
+      classes = f.read().rstrip('\n').split('\n')
+cap = cv2.VideoCapture(0)
+modelWeights = "best (3).onnx"
+net = cv2.dnn.readNet(modelWeights)
+count = 0
+center_pt_prev_frame= []
+tracking_object={}
+track_id=1
+obj_id1=0
+offset = 30
+counter = 0
+j = 0
+k=[]
+
+output_file = 'output2.mp4'
+fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+fps = cap.get(cv2.CAP_PROP_FPS)
+frame_size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+
+# Create the video writer object
+out = cv2.VideoWriter(output_file, fourcc, fps, frame_size)
+
+while True:
+    _, frame = cap.read()
+    count +=1
+    try:
+        (H, W) = frame.shape[:2]
+    except:
+        pass
+    if frame is None:
+        ("no frame")
+        break
+    
+    blob = cv2.dnn.blobFromImage(frame, 1/255,  (416, 416), [0,0,0], 1, crop=False)
+    net.setInput(blob)
+    outputs = net.forward(net.getUnconnectedOutLayersNames())
+    
+    rows = outputs[0].shape[1]
+    image_height, image_width = frame.shape[:2]
+    
+    # Resizing factor.
+    x_factor = image_width / 416
+    y_factor =  image_height / 416
+    # Iterate through detections.
+    
+    class_ids = []
+    confidences = []
+    boxes = []
+    center = []
+    detect = []
+    center_pt_cur_frame=[]
+    cv2.line(frame, (0,H//2), (W,H//2),(0,255,0),3)
+    for r in range(rows):
+        row = outputs[0][0][r]
+        confidence = row[4]
+        # Discard bad detections and continue.
+        if confidence >= 0.50:
+              classes_scores = row[5:]
+              # Get the index of max class score.
+              class_id = np.argmax(classes_scores)
+              #  Continue if the class score is above threshold.
+              if (classes_scores[class_id] > 0.5):
+                    confidences.append(confidence)
+                    class_ids.append(class_id)
+                    cx, cy, w, h = row[0], row[1], row[2], row[3]
+
+                    left = int((cx - w/2) * x_factor)
+
+                    top = int((cy - h/2) * y_factor)
+                    width = int(w * x_factor)
+                    height = int(h * y_factor)
+
+                    box = np.array([left, top, width, height])
+                    boxes.append(box)
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, 0.50,0.2)
+    
+    for i in indices:
+        box = boxes[i]
+       
+        left = box[0]
+        top = box[1]
+        width = box[2]
+        height = box[3]
+        cx = int((left+left+width)/2)
+        cy = int((top+top+height)/2)
+        center_pt_cur_frame.append((cx,cy))
+        
+        cv2.rectangle(frame, (left, top), (left + width, top + height),(255,0,255), 4)
+        label = "{}:{:.2f}".format(classes[class_ids[i]], confidences[i]) 
+        text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 1)
+        dim, baseline = text_size[0], text_size[1]
+        cv2.rectangle(frame, (left,top), (left + dim[0], top + dim[1] + baseline), (0,0,0), cv2.FILLED);
+        cv2.putText(frame, label, (left,top + dim[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,255), 1, cv2.LINE_AA)
+        # cv2.putText(frame, 'egg', (left,top + dim[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,255), 1, cv2.LINE_AA)
+        
+        center = cx , cy
+        detect.append(center)
+        # for xx,yy in detect:
+        #     if yy<(H//2+offset) and yy>(H//2-offset):
+                
+        #         cv2.line(frame, (0,H//2), (W,H//2),(0,255,0),3)
+        #         cv2.line(frame, (0,H//2+offset), (W,H//2+offset) , (255,255,255), 1)
+        #         cv2.line(frame, (0,H//2-offset), (W,H//2-offset) , (255,255,0), 1)
+                
+    if count <= 2:   
+        for pt in center_pt_cur_frame:
+                for pt2 in center_pt_prev_frame:
+                    distance = math.hypot(pt2[0] - pt[0], pt2[1] - pt[1])
+                    
+                    if distance < 50:
+                        tracking_object[track_id] = pt
+                        track_id += 1
+    else:
+        tracking_object_copy = tracking_object.copy()
+        center_pt_cur_frame_copy = center_pt_cur_frame.copy()
+        for obj_id,pt2 in tracking_object_copy.items():
+            
+            object_exists=False
+            for pt in center_pt_cur_frame:
+                distance = math.hypot(pt2[0] - pt[0], pt2[1] - pt[1])
+                
+                if distance < 50:
+                    tracking_object[obj_id] = pt
+                    # print("ti ",tracking_object)
+                    for i in tracking_object.keys():
+                        if tracking_object[i][1]<(H//2+offset) and tracking_object[i][1]>(H//2-offset):
+                            if i not in k:
+                                counter+=1
+                                print(counter)
+                                k.append(i)
+                            # if j!=i:
+                            #     counter+=1
+                            #     print(counter)
+                            # j = i
+                        
+                    objet_exists=True
+                    if pt in center_pt_cur_frame:
+                        center_pt_cur_frame.remove(pt)
+                        continue            
+   
+        for pt in center_pt_cur_frame:
+            
+            tracking_object[track_id]=pt
+            track_id +=1
+            
+    for i in list(tracking_object.keys()):
+        if tracking_object[i][1]>7*H//8:
+            for obj_id,pt in tracking_object.items():
+                # cv2.circle(frame,pt,1,(0,0,255),-1)
+                # cv2.putText(frame, str(obj_id), (pt[0]-10,pt[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.1, (0,0,255), 2, 2)
+                obj_id1=obj_id
+                tracking_object[i]= (0,0)
+
+    # cv2.putText(frame,"Total Eggs : " +str(obj_id1),(20,30),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),2)
+    cv2.putText(frame,"Total Eggs : " +str(counter),(20,30),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),2)
+    vid = frame
+    scale_percent = 100
+    width = int(vid.shape[1] * scale_percent / 100)
+    height = int(vid.shape[0] * scale_percent / 100)
+    dim = (width, height)
+    resized = cv2.resize(vid, dim, interpolation = cv2.INTER_AREA)
+    cv2.imshow('Output', resized)
+    out.write(frame)
+    center_pt_prev_frame=center_pt_cur_frame.copy()
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+          break
+
+cap.release()    
+cv2.destroyAllWindows()
